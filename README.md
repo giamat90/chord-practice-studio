@@ -1,6 +1,6 @@
 # Chord Practice Studio
 
-Type or build a chord progression, see the notes on a piano keyboard, and hear it played back.
+Type or build a chord progression, see the notes on a piano keyboard and as a guitar chord diagram, and hear it played back.
 Runs entirely in the browser: no account, no tracking, nothing is uploaded.
 
 **Live:** https://giamat90.github.io/chord-practice-studio/
@@ -13,6 +13,7 @@ Runs entirely in the browser: no account, no tracking, nothing is uploaded.
   Both `♯`/`♭` and `#`/`b` work.
 - Pick a root and quality in **Build a chord** to add chords without typing. Click a bar to select, audition, move, duplicate or remove it.
 - Space plays or stops. Choose instrument, pattern, tempo and chord length under **Sound**.
+- The **Player** shows the sounding chord on a piano and as a guitar chord box (standard tuning; dots are named by note, bass note highlighted). **Piano / Guitar / Both** switches the view.
 - Your progression and settings are remembered in this browser only (`localStorage`).
 
 ## How it is built
@@ -23,9 +24,11 @@ One static page, no build step and no dependencies.
 |---|---|
 | `index.html` | Markup, styles, music theory module (`window.Theory`) and the app (Web Audio synthesis, scheduler, UI) |
 | `fonts/`, `fonts.css` | Self-hosted woff2 fonts, see `THIRD-PARTY-NOTICES.md` |
-| `tests/theory.test.mjs` | Tests for chord parsing, note spelling, voicing and patterns |
+| `tests/theory.test.mjs` | Tests for chord parsing, note spelling, voicing, patterns and guitar shapes |
 
 The music theory script has no DOM or audio, so the tests load it straight out of `index.html`.
+
+Guitar shapes (`Theory.guitarVoicing`) come in two layers: the familiar open and barre forms (C, A, G, E, D shapes, written as fret strings like `x02220` and shifted to the root), and for everything else, slash chords included, a search over the fretboard (four-fret span, four fingers or a barre, no gaps between played strings, bass on the lowest string). The tests pin the textbook shapes and check every quality in every key.
 
 ## Develop
 

@@ -86,3 +86,56 @@ test('patterns produce events inside the chord length', () => {
     for (const e of ev) assert.ok(e.t >= 0 && e.t < 4, style + ' t=' + e.t);
   }
 });
+
+const shape = s => T.guitarText(T.guitarVoicing(T.parseChord(s)).frets);
+
+test('guitar: the open and barre shapes every player knows', () => {
+  const expected = {
+    C: 'x32010', G: '320003', D: 'xx0232', A: 'x02220', E: '022100', F: '133211',
+    Bb: 'x13331', B: 'x24442', 'F#': '244322',
+    Am: 'x02210', Em: '022000', Dm: 'xx0231', Bm: 'x24432', Cm: 'x35543', 'F#m': '244222',
+    E7: '020100', A7: 'x02020', D7: 'xx0212', G7: '320001', C7: 'x32310', B7: 'x21202',
+    Cmaj7: 'x32000', Dm7: 'xx0211', Em7: '020000', Am7: 'x02010',
+    Asus4: 'x02230', Dsus2: 'xx0230', Bm7b5: 'x2323x', Bdim7: 'x2313x', Caug: 'x32110',
+    'C/E': '032010', 'C/G': '332010', 'D/F#': '200232'
+  };
+  for (const [name, frets] of Object.entries(expected)) assert.equal(shape(name), frets, name);
+});
+
+test('guitar: every quality in every key has a playable shape that spells the chord', () => {
+  const basses = [null, 'E', 'F#', 'Bb'];
+  for (const root of T.SHARP) {
+    for (const [q] of T.QUALITIES) {
+      for (const bass of basses) {
+        const name = root + q + (bass ? '/' + bass : '');
+        const c = T.parseChord(name);
+        const v = T.guitarVoicing(c);
+        // a slash bass that clashes with a dense chord may have no shape; plain chords always do
+        if (!v) { assert.ok(bass, name + ' has no shape'); continue; }
+        const pcs = new Set(c.iv.map(i => (c.rootPc + i) % 12));
+        const bassPc = c.bass ? c.bass.pc : c.rootPc;
+        pcs.add(bassPc);
+        const sounded = v.frets.map((f, s) => (f < 0 ? -1 : (T.TUNING[s] + f) % 12));
+        const live = sounded.filter(p => p >= 0);
+        assert.ok(live.length >= 2, name + ' strings');
+        assert.ok(live.every(p => pcs.has(p)), name + ' foreign note in ' + T.guitarText(v.frets));
+        assert.equal(live[0], bassPc, name + ' lowest string');
+        assert.ok(live.includes(c.rootPc), name + ' root');
+        for (const i of c.iv) if (i > 0 && i < 12 && i !== 7) assert.ok(live.includes((c.rootPc + i) % 12), name + ' tone ' + i);
+        const fretted = v.frets.filter(f => f > 0);
+        if (fretted.length) assert.ok(Math.max(...fretted) - Math.min(...fretted) <= 3, name + ' span');
+        assert.ok(v.fingers <= 4, name + ' fingers');
+        const first = v.frets.findIndex(f => f >= 0), last = v.frets.length - 1 - [...v.frets].reverse().findIndex(f => f >= 0);
+        assert.ok(v.frets.slice(first, last + 1).every(f => f >= 0), name + ' muted string between played strings');
+        v.names.forEach((n, s) => assert.equal(n === '', v.frets[s] < 0, name + ' names'));
+      }
+    }
+  }
+});
+
+test('guitar: dots are spelled by scale degree and shapes are cached', () => {
+  const v = T.guitarVoicing(T.parseChord('Bbmaj7'));
+  assert.deepEqual(plain(v.names.filter(Boolean).filter((n, i, a) => a.indexOf(n) === i).sort()), ['A', 'Bb', 'D', 'F']);
+  assert.equal(T.guitarVoicing(T.parseChord('Bbmaj7')), v);
+  assert.equal(T.guitarText([-1, 10, 12, 12, 11, 10]), 'x-10-12-12-11-10');
+});
