@@ -87,7 +87,7 @@ test('patterns produce events inside the chord length', () => {
   }
 });
 
-const shape = s => T.guitarText(T.guitarVoicing(T.parseChord(s)).frets);
+const shape = (s, tuning) => T.guitarText(T.guitarVoicing(T.parseChord(s), tuning).frets);
 
 test('guitar: the open and barre shapes every player knows', () => {
   const expected = {
@@ -102,20 +102,40 @@ test('guitar: the open and barre shapes every player knows', () => {
   for (const [name, frets] of Object.entries(expected)) assert.equal(shape(name), frets, name);
 });
 
+test('guitar: shapes follow the tuning', () => {
+  // a uniform retune keeps the familiar shapes, they just name different chords
+  assert.equal(shape('B', 'half'), 'x32010');
+  assert.equal(shape('C', 'full'), 'xx0232');
+  assert.equal(shape('E', 'full'), '244322');
+  // dropping the low string makes it the root of an E-form
+  assert.equal(shape('E', 'dropd'), '222100');
+  assert.equal(shape('D', 'dropc'), '222100');
+  assert.equal(shape('C', 'dropc'), 'xx0232');
+  // open tunings are open chords
+  assert.equal(shape('D', 'opend'), '000000');
+  assert.equal(shape('G', 'openg'), 'x00000');
+  // the standard shape for G is wrong once the low string is a D
+  assert.notEqual(shape('G', 'dropd'), shape('G'));
+  assert.equal(T.tuningOf('nonsense')[0], 40);
+});
+
 test('guitar: every quality in every key has a playable shape that spells the chord', () => {
-  const basses = [null, 'E', 'F#', 'Bb'];
+  for (const tuning of T.TUNINGS) {
+  const tu = tuning.midi;
   for (const root of T.SHARP) {
+    // the full bass matrix for standard tuning; elsewhere plain chords plus a slash bass on two roots
+    const basses = tuning.id === 'standard' ? [null, 'E', 'F#', 'Bb'] : root === 'C' || root === 'A' ? [null, 'E'] : [null];
     for (const [q] of T.QUALITIES) {
       for (const bass of basses) {
         const name = root + q + (bass ? '/' + bass : '');
         const c = T.parseChord(name);
-        const v = T.guitarVoicing(c);
+        const v = T.guitarVoicing(c, tuning.id);
         // a slash bass that clashes with a dense chord may have no shape; plain chords always do
-        if (!v) { assert.ok(bass, name + ' has no shape'); continue; }
+        if (!v) { assert.ok(bass || tuning.id !== 'standard', name + ' has no shape'); continue; }
         const pcs = new Set(c.iv.map(i => (c.rootPc + i) % 12));
         const bassPc = c.bass ? c.bass.pc : c.rootPc;
         pcs.add(bassPc);
-        const sounded = v.frets.map((f, s) => (f < 0 ? -1 : (T.TUNING[s] + f) % 12));
+        const sounded = v.frets.map((f, s) => (f < 0 ? -1 : (tu[s] + f) % 12));
         const live = sounded.filter(p => p >= 0);
         assert.ok(live.length >= 2, name + ' strings');
         assert.ok(live.every(p => pcs.has(p)), name + ' foreign note in ' + T.guitarText(v.frets));
@@ -130,6 +150,7 @@ test('guitar: every quality in every key has a playable shape that spells the ch
         v.names.forEach((n, s) => assert.equal(n === '', v.frets[s] < 0, name + ' names'));
       }
     }
+  }
   }
 });
 

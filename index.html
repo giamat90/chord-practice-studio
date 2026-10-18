@@ -137,6 +137,7 @@ select{width:100%;min-height:42px;padding:0 10px;border:1px solid var(--line);bo
 .gtr{flex:0 0 auto;width:176px;margin:0;display:flex;flex-direction:column;align-items:center;gap:2px}
 .stage[data-view="guitar"] .gtr{width:224px}
 .gtr-svg{display:block;width:100%;height:auto}
+.tuning{width:100%;min-height:34px;margin-top:4px;font-size:13px}
 .gtr-cap{font-family:var(--font-mono);font-size:13px;color:var(--muted);letter-spacing:.05em;min-height:1.5em}
 .g-fret{stroke:var(--key-edge);stroke-width:1}
 .g-nut{stroke:var(--ink);stroke-width:3.2}
@@ -244,6 +245,7 @@ select{width:100%;min-height:42px;padding:0 10px;border:1px solid var(--line);bo
       <figure class="gtr">
         <svg id="gtr" class="gtr-svg" role="img" aria-label="Guitar chord diagram"></svg>
         <figcaption id="gtr-cap" class="gtr-cap"></figcaption>
+        <select id="tuning" class="tuning" aria-label="Guitar tuning"></select>
       </figure>
     </div>
     <div class="legend"><span><i class="sw sw-live"></i>Chord tones</span><span><i class="sw sw-bass"></i>Bass note</span></div>
@@ -492,9 +494,20 @@ function pattern(style,v,beats){
   return ev;
 }
 
-/* Guitar shapes. Standard tuning; frets run low E to high E, -1 is a muted string.
-   Common qualities use the familiar open and barre forms (written as ordinary fret strings, shifted to the root); anything else, and every slash chord, is searched. */
-const TUNING=[40,45,50,55,59,64],MAX_FRET=12;
+/* Guitar shapes. Frets run from the lowest string to the highest, -1 is a muted string. Tunings are MIDI notes per string.
+   Common qualities use the familiar open and barre forms (written as ordinary fret strings, shifted to the root); anything else, and every slash chord, is searched. Every candidate is checked against the notes the strings really give, so a form that does not fit a tuning is dropped and the search answers instead. */
+const TUNINGS=[
+  {id:'standard',name:'Standard',midi:[40,45,50,55,59,64]},
+  {id:'half',name:'Half step down',midi:[39,44,49,54,58,63]},
+  {id:'full',name:'Full step down',midi:[38,43,48,53,57,62]},
+  {id:'dropd',name:'Drop D',midi:[38,45,50,55,59,64]},
+  {id:'dropc',name:'Drop C',midi:[36,43,48,53,57,62]},
+  {id:'dadgad',name:'DADGAD',midi:[38,45,50,55,57,62]},
+  {id:'openg',name:'Open G',midi:[38,43,50,55,59,62]},
+  {id:'opend',name:'Open D',midi:[38,45,50,54,57,62]}
+];
+const MAX_FRET=12;
+const tuningOf=id=>(TUNINGS.find(t=>t.id===id)||TUNINGS[0]).midi;
 
 /* Fingering and difficulty of one set of frets, or null when it cannot be played with four fingers. */
 function playability(fr){
@@ -523,6 +536,41 @@ function playability(fr){
   return {n,fingers,barre,base:nF&&hi>5?lo:1,pos:nF?lo:0,cost};
 }
 
+/* What a shape must contain to count as this chord: bass, root, third or sus tone, sixth or seventh, a flat or sharp fifth, and the highest natural extension (the 13 in a 13 chord). Other 9/11/13 tones are wanted. Altered tones need at least one. */
+function requirements(c){
+  const pc=i=>(c.rootPc+i)%12;
+  const bassPc=c.bass?c.bass.pc:c.rootPc;
+  const pcs=new Set(c.iv.map(pc).concat(bassPc));
+  const need=new Set([bassPc,c.rootPc]),nat=new Set(),alt=new Set();
+  let top=0;
+  c.iv.forEach(i=>{
+    if(i===0||i===7)return;
+    if(i<12)need.add(pc(i));
+    else if(i===14||i===17||i===21){nat.add(pc(i));top=Math.max(top,i);}
+    else alt.add(pc(i));
+  });
+  if(top)need.add(pc(top));
+  return {pcs,need,bassPc,
+    altL:[...alt].filter(p=>!need.has(p)),
+    natL:[...nat].filter(p=>!need.has(p)),
+    fifth:c.iv.includes(7)?pc(7):-1,
+    minStr:pcs.size>2?3:2};
+}
+/* the set of notes a fingering sounds, or null when it breaks the requirements; extra is the penalty for wanted tones it leaves out */
+function covers(fr,tu,rq){
+  const got=new Set();
+  for(let s=0;s<6;s++){
+    if(fr[s]<0)continue;
+    const p=(tu[s]+fr[s])%12;
+    if(!rq.pcs.has(p)||(!got.size&&p!==rq.bassPc))return null;
+    got.add(p);
+  }
+  if(got.size<rq.minStr)return null;
+  for(const p of rq.need)if(!got.has(p))return null;
+  if(rq.altL.length&&!rq.altL.some(p=>got.has(p)))return null;
+  return 1.2*rq.natL.filter(p=>!got.has(p)).length+2*rq.altL.filter(p=>!got.has(p)).length+(rq.fifth>=0&&!got.has(rq.fifth)?0.4:0);
+}
+
 /* Each form: [string the root sits on, frets as played for one root]. Shifting it along the neck gives the other keys, except that a form with open strings and a fretted root (the C and G shapes) only makes sense where it was written. */
 const FORMS={
   '':[[0,'022100'],[1,'x02220'],[2,'xx0232'],[1,'x32010'],[0,'320003']],
@@ -546,13 +594,13 @@ const FORMS={
 const FORM_BY_IV={};
 Object.keys(FORMS).forEach(q=>{FORM_BY_IV[parseQuality(q).join(',')]=FORMS[q];});
 
-function formShape(c){
+function formShape(c,tu,rq){
   const forms=FORM_BY_IV[c.iv.join(',')];
   if(!forms)return null;
   let best=null;
   forms.forEach(([rs,tpl])=>{
     const ref=+tpl[rs];
-    const r0=((c.rootPc-TUNING[rs])%12+12)%12;
+    const r0=((c.rootPc-tu[rs])%12+12)%12;
     [r0,r0+12].forEach(r=>{
       if(ref>0&&tpl.includes('0')&&r!==ref)return;
       const fr=[];
@@ -563,46 +611,27 @@ function formShape(c){
         fr.push(f);
       }
       if(!ok)return;
-      const p=playability(fr);
-      if(p&&(!best||p.cost<best.cost-1e-9))best=Object.assign(p,{frets:fr});
+      const extra=covers(fr,tu,rq),p=extra==null?null:playability(fr);
+      if(!p)return;
+      p.cost+=extra;
+      if(!best||p.cost<best.cost-1e-9)best=Object.assign(p,{frets:fr});
     });
   });
   return best;
 }
 
-function searchShape(c){
-  const pc=i=>(c.rootPc+i)%12;
-  const bassPc=c.bass?c.bass.pc:c.rootPc;
-  const pcs=new Set(c.iv.map(pc).concat(bassPc));
-  /* must sound: bass, root, third or sus tone, sixth or seventh, a flat or sharp fifth, and the highest natural extension (the 13 in a 13 chord). Other 9/11/13 tones are wanted. Altered tones need at least one. */
-  const need=new Set([bassPc,c.rootPc]),nat=new Set(),alt=new Set();
-  let top=0;
-  c.iv.forEach(i=>{
-    if(i===0||i===7)return;
-    if(i<12)need.add(pc(i));
-    else if(i===14||i===17||i===21){nat.add(pc(i));top=Math.max(top,i);}
-    else alt.add(pc(i));
-  });
-  if(top)need.add(pc(top));
-  const altL=[...alt].filter(p=>!need.has(p));
-  const natL=[...nat].filter(p=>!need.has(p));
-  const has5=c.iv.includes(7),minStr=pcs.size>2?3:2;
-  const strings=TUNING.map(o=>{
+function searchShape(c,tu,rq){
+  const strings=tu.map(o=>{
     const f=[];
-    for(let n=0;n<=MAX_FRET;n++)if(pcs.has((o+n)%12))f.push(n);
+    for(let n=0;n<=MAX_FRET;n++)if(rq.pcs.has((o+n)%12))f.push(n);
     return f;
   });
   const fr=[-1,-1,-1,-1,-1,-1];
   let best=null;
   function leaf(){
-    const got=new Set();
-    for(let s=0;s<6;s++)if(fr[s]>=0)got.add((TUNING[s]+fr[s])%12);
-    if(got.size<minStr)return;
-    for(const p of need)if(!got.has(p))return;
-    if(altL.length&&!altL.some(p=>got.has(p)))return;
-    const p=playability(fr);
-    if(!p||p.n<minStr)return;
-    p.cost+=1.2*natL.filter(x=>!got.has(x)).length+2*altL.filter(x=>!got.has(x)).length+(has5&&!got.has(pc(7))?0.4:0);
+    const extra=covers(fr,tu,rq),p=extra==null?null:playability(fr);
+    if(!p||p.n<rq.minStr)return;
+    p.cost+=extra;
     if(!best||p.cost<best.cost-1e-9)best=Object.assign(p,{frets:fr.slice()});
   }
   function rec(s,started,ended,lo,hi){
@@ -611,7 +640,7 @@ function searchShape(c){
     rec(s+1,started,started,lo,hi);
     if(ended)return;
     for(const f of strings[s]){
-      if(!started&&(TUNING[s]+f)%12!==bassPc)continue;
+      if(!started&&(tu[s]+f)%12!==rq.bassPc)continue;
       const nlo=f?Math.min(lo,f):lo,nhi=f?Math.max(hi,f):hi;
       if(nhi-nlo>3)continue;
       fr[s]=f;
@@ -624,23 +653,24 @@ function searchShape(c){
 }
 
 const shapes={};
-function guitarVoicing(c){
-  if(c.text in shapes)return shapes[c.text];
-  const slash=c.bass&&c.bass.pc!==c.rootPc;
+function guitarVoicing(c,tuningId){
+  const tu=tuningOf(tuningId),key=tu.join(',')+'|'+c.text;
+  if(key in shapes)return shapes[key];
+  const slash=c.bass&&c.bass.pc!==c.rootPc,rq=requirements(c);
   /* a form wins in the first four frets even when a search found something slightly easier; higher up the cheaper shape wins */
-  const f=slash?null:formShape(c),s=searchShape(c);
+  const f=slash?null:formShape(c,tu,rq),s=searchShape(c,tu,rq);
   const sh=f&&(!s||f.cost-(f.pos<=4?2.5:0)<=s.cost)?f:s;
   if(sh){
     const pc=i=>(c.rootPc+i)%12,spell={};
     noteNames(c).forEach((nm,i)=>{const p=pc(c.iv[i]);if(!(p in spell))spell[p]=nm;});
     if(c.bass&&!(c.bass.pc in spell))spell[c.bass.pc]=c.bass.letter+c.bass.acc;
-    sh.names=sh.frets.map((f,s)=>f<0?'':spell[(TUNING[s]+f)%12]);
+    sh.names=sh.frets.map((f,s)=>f<0?'':spell[(tu[s]+f)%12]);
   }
-  return (shapes[c.text]=sh);
+  return (shapes[key]=sh);
 }
 const guitarText=frets=>frets.map(f=>f<0?'x':f).join(frets.some(f=>f>9)?'-':'');
 
-g.Theory={SHARP,FLAT,QUALITIES,TUNING,parseChord,parseProgression,serialize,noteNames,chordHTML,chordLabel,voicing,pattern,guitarVoicing,guitarText};
+g.Theory={SHARP,FLAT,QUALITIES,TUNINGS,tuningOf,parseChord,parseProgression,serialize,noteNames,chordHTML,chordLabel,voicing,pattern,guitarVoicing,guitarText};
 })(typeof window!=='undefined'?window:globalThis);
 </script>
 <script>
@@ -652,12 +682,12 @@ const $=id=>document.getElementById(id);
 const el={
   input:$('prog-input'),status:$('status'),chart:$('chart'),tools:$('sel-tools'),selName:$('sel-name'),
   play:$('play'),playLbl:$('play-lbl'),ico:$('ico'),loop:$('loop'),bpm:$('bpm'),bpmOut:$('bpm-out'),
-  nowName:$('now-name'),nowNotes:$('now-notes'),kb:$('kb'),stage:$('stage'),viewSeg:$('view-seg'),gtr:$('gtr'),gtrCap:$('gtr-cap'),roots:$('roots'),quals:$('quals'),bass:$('bass'),
+  nowName:$('now-name'),nowNotes:$('now-notes'),kb:$('kb'),stage:$('stage'),tuning:$('tuning'),viewSeg:$('view-seg'),gtr:$('gtr'),gtrCap:$('gtr-cap'),roots:$('roots'),quals:$('quals'),bass:$('bass'),
   pvName:$('pv-name'),pvNotes:$('pv-notes'),add:$('add'),replace:$('replace'),hear:$('hear'),
   inst:$('inst'),style:$('style'),beats:$('beats'),vol:$('vol'),volOut:$('vol-out')
 };
 const DEFAULT_TEXT='Dm7 G7 Cmaj7 A7alt';
-const state={bpm:92,beats:4,loop:true,inst:'epiano',style:'strum',vol:0.7,spell:'#',view:'both'};
+const state={bpm:92,beats:4,loop:true,inst:'epiano',style:'strum',vol:0.7,spell:'#',view:'both',tuning:'standard'};
 const build={pc:3,qual:'m7',bass:'',chord:null};
 let prog=[],sel=-1,liveIdx=-1,lastErrors=[];
 const pretty=s=>s.replace(/#/g,'♯').replace(/b/g,'♭');
@@ -836,8 +866,10 @@ function lightKeys(v){
 }
 /* chord box: low E on the left, the nut on top (or a fret number when the shape sits higher up), dots named by note */
 const GS=16,GR=18,GL=26,GT=24,ROWS=5;
+let lastDrawn=null;
 function drawGuitar(c){
-  const sh=T.guitarVoicing(c),sv=el.gtr;
+  lastDrawn=c;
+  const sh=T.guitarVoicing(c,state.tuning),sv=el.gtr;
   const gx=s=>GL+s*GS,gy=r=>GT+r*GR;
   sv.textContent='';
   sv.setAttribute('viewBox','0 0 '+(GL+5*GS+14)+' '+(GT+ROWS*GR+16));
@@ -847,10 +879,10 @@ function drawGuitar(c){
     sv.appendChild(mk('rect',{x:gx(b.from)-7,y:gy(b.fret-base)+GR/2-7,width:(b.to-b.from)*GS+14,height:14,rx:7,class:'g-bar'}));
   }
   for(let r=0;r<=ROWS;r++)sv.appendChild(mk('line',{x1:gx(0),x2:gx(5),y1:gy(r),y2:gy(r),class:r===0&&base===1?'g-nut':'g-fret'}));
-  T.TUNING.forEach((m,s)=>{
+  T.tuningOf(state.tuning).forEach((m,s)=>{
     sv.appendChild(mk('line',{x1:gx(s),x2:gx(s),y1:gy(0),y2:gy(ROWS),class:'g-str'}));
     const t=mk('text',{x:gx(s),y:gy(ROWS)+11,class:'g-name'});
-    t.textContent=T.SHARP[m%12];
+    t.textContent=pretty(names()[m%12]);
     sv.appendChild(t);
   });
   if(!sh){
@@ -1046,7 +1078,7 @@ function updatePreview(aud){
 /* ---------- saved settings (per browser, optional) ---------- */
 const KEY='chord-practice-studio-v1';
 function save(){
-  try{localStorage.setItem(KEY,JSON.stringify({text:el.input.value,bpm:state.bpm,beats:state.beats,loop:state.loop,inst:state.inst,style:state.style,vol:state.vol,spell:state.spell,view:state.view}));}catch(e){}
+  try{localStorage.setItem(KEY,JSON.stringify({text:el.input.value,bpm:state.bpm,beats:state.beats,loop:state.loop,inst:state.inst,style:state.style,vol:state.vol,spell:state.spell,view:state.view,tuning:state.tuning}));}catch(e){}
 }
 function restore(){
   try{const s=JSON.parse(localStorage.getItem(KEY)||'null');return s&&typeof s==='object'?s:null;}catch(e){return null;}
@@ -1057,6 +1089,13 @@ function applyView(){
   el.stage.dataset.view=state.view;
   el.viewSeg.querySelectorAll('button').forEach(x=>x.setAttribute('aria-pressed',String(x.dataset.view===state.view)));
 }
+T.TUNINGS.forEach(t=>{
+  const o=document.createElement('option');o.value=t.id;o.textContent=t.name;el.tuning.appendChild(o);
+});
+el.tuning.addEventListener('change',()=>{
+  state.tuning=el.tuning.value;save();
+  if(lastDrawn)drawGuitar(lastDrawn);
+});
 el.viewSeg.addEventListener('click',e=>{
   const b=e.target.closest('[data-view]');if(!b)return;
   state.view=b.dataset.view;applyView();save();
@@ -1143,6 +1182,7 @@ el.hear.addEventListener('click',()=>{if(build.chord)audition(build.chord);});
   if(typeof s.loop==='boolean')state.loop=s.loop;
   if(s.spell==='#'||s.spell==='b')state.spell=s.spell;
   if(s.view==='piano'||s.view==='guitar'||s.view==='both')state.view=s.view;
+  if(T.TUNINGS.some(t=>t.id===s.tuning))state.tuning=s.tuning;
   el.bpm.value=state.bpm;el.bpmOut.textContent=state.bpm+' BPM';
   el.vol.value=Math.round(state.vol*100);el.volOut.textContent=el.vol.value+'%';
   el.loop.checked=state.loop;
@@ -1151,6 +1191,7 @@ el.hear.addEventListener('click',()=>{if(build.chord)audition(build.chord);});
     state[k]=k==='beats'?+el[id].value:el[id].value;
   });
   $('spell-seg').querySelectorAll('button').forEach(x=>x.setAttribute('aria-pressed',String(x.dataset.spell===state.spell)));
+  el.tuning.value=state.tuning;
   applyView();
   buildKeyboard();renderQuals();renderRoots();renderBass();
   const text=typeof s.text==='string'?s.text:DEFAULT_TEXT;

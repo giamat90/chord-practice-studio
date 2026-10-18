@@ -13,7 +13,7 @@ Runs entirely in the browser: no account, no tracking, nothing is uploaded.
   Both `♯`/`♭` and `#`/`b` work.
 - Pick a root and quality in **Build a chord** to add chords without typing. Click a bar to select, audition, move, duplicate or remove it.
 - Space plays or stops. Choose instrument, pattern, tempo and chord length under **Sound**.
-- The **Player** shows the sounding chord on a piano and as a guitar chord box (standard tuning; dots are named by note, bass note highlighted). **Piano / Guitar / Both** switches the view.
+- The **Player** shows the sounding chord on a piano and as a guitar chord box (dots are named by note, bass note highlighted). **Piano / Guitar / Both** switches the view, and the tuning menu under the box (Standard, half or full step down, Drop D, Drop C, DADGAD, Open G, Open D) re-fits every shape to the strings.
 - Your progression and settings are remembered in this browser only (`localStorage`).
 
 ## How it is built
@@ -28,7 +28,7 @@ One static page, no build step and no dependencies.
 
 The music theory script has no DOM or audio, so the tests load it straight out of `index.html`.
 
-Guitar shapes (`Theory.guitarVoicing`) come in two layers: the familiar open and barre forms (C, A, G, E, D shapes, written as fret strings like `x02220` and shifted to the root), and for everything else, slash chords included, a search over the fretboard (four-fret span, four fingers or a barre, no gaps between played strings, bass on the lowest string). The tests pin the textbook shapes and check every quality in every key.
+Guitar shapes (`Theory.guitarVoicing(chord, tuningId)`) come in two layers: the familiar open and barre forms (C, A, G, E, D shapes, written as fret strings like `x02220` and shifted to the root), and for everything else, slash chords included, a search over the fretboard (four-fret span, four fingers or a barre, no gaps between played strings, bass on the lowest string). Every candidate is checked against the notes the strings really give, so a form that does not fit a tuning is dropped and the search answers instead. The tests pin the textbook shapes, a few shapes per tuning, and check every quality in every key in every tuning.
 
 ## Develop
 
